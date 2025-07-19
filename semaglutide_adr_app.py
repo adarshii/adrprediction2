@@ -9,7 +9,7 @@ import gzip
 import os
 import traceback
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run semaglutide_adr_app.py
 # Debugging: Show environment info
 st.write("Python version:", sys.version)
 st.write("Working directory:", os.getcwd())
