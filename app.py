@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 import gzip
 import os
 import traceback
-
+pip install -r requirements.txt
+streamlit run app.py
 # Debugging: Show environment info
 st.write("Python version:", sys.version)
 st.write("Working directory:", os.getcwd())
@@ -157,6 +158,7 @@ st.sidebar.info("""
 - **Version**: 2.1.0
 - **Last Updated**: 2023-11-15
 """)
+joblib.dump(model, 'semaglutide_model.pkl', protocol=4, compress=3)
 
 # Add PubChem link
 st.sidebar.markdown("[PubChem Semaglutide Data](https://pubchem.ncbi.nlm.nih.gov/compound/Semaglutide)")
