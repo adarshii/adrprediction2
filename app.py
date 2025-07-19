@@ -6,140 +6,157 @@ import pandas as pd
 import shap
 import matplotlib.pyplot as plt
 import gzip
+import os
+import traceback
 
-# Load model components
+# Debugging: Show environment info
+st.write("Python version:", sys.version)
+st.write("Working directory:", os.getcwd())
+st.write("Files in directory:", os.listdir('.'))
+
+# Load model components with error handling
 @st.cache_resource
 def load_components():
-    model = joblib.load('semaglutide_model.pkl')
-    preprocessor = joblib.load('preprocessor.pkl')
-    top_reactions = joblib.load('top_reactions.pkl')
-    return model, preprocessor, top_reactions
+    try:
+        # Debug file sizes
+        st.write("Model file size:", os.path.getsize('semaglutide_model.pkl'))
+        st.write("Preprocessor file size:", os.path.getsize('preprocessor.pkl'))
+        st.write("Top reactions file size:", os.path.getsize('top_reactions.pkl'))
+        
+        # Try different loading methods
+        try:
+            model = joblib.load('semaglutide_model.pkl')
+        except:
+            model = joblib.load('semaglutide_model.pkl', mmap_mode='r', encoding='latin1')
+        
+        preprocessor = joblib.load('preprocessor.pkl', mmap_mode='r')
+        top_reactions = joblib.load('top_reactions.pkl')
+        
+        return model, preprocessor, top_reactions
+    except Exception as e:
+        st.error(f"LOAD ERROR: {str(e)}")
+        st.error(traceback.format_exc())
+        st.stop()
 
-model, preprocessor, TOP_REACTIONS = load_components()
+try:
+    model, preprocessor, TOP_REACTIONS = load_components()
+    st.success("Model components loaded successfully!")
+except:
+    st.error("Failed to load model components")
 
 # Title
 st.title("Semaglutide ADR Prediction & Risk Assessment")
+
+# PubChem Data Section (using your provided data)
+st.subheader("Semaglutide Chemical Information")
+if st.checkbox("Show PubChem Compound Data"):
+    pubchem_data = {
+        "Compound CID": [56843331, 162393099],
+        "Name": ["Semaglutide", "Semaglutide Acetate"],
+        "Molecular Formula": ["C187H291N45O59", "C189H295N45O61"],
+        "Molecular Weight": [4114.0, 4174.0],
+        "SMILES": ["CC[C@H](C)[C@@H](C(=O)N[C@@H](C)C(=O)N[C@@H](CC1=CNC2=CC=CC=C21)...", "CC(C)(C)OC(=O)[C@H](CCC(=O)NCCOCCOCC(=O)NCCOCCOCC(=O)O)NC(=O)CCCCCCCCCCCCCCCCC(=O)O"]
+    }
+    pubchem_df = pd.DataFrame(pubchem_data)
+    st.dataframe(pubchem_df)
 
 # File Upload Section
 st.subheader("Upload Patient Data")
 csv_file = st.file_uploader("Upload Patient Metadata (.csv)", type=['csv'])
 tsv_file = st.file_uploader("Upload Gene Expression Data (.tsv or .tsv.gz)", type=['tsv', 'gz'])
 
-if csv_file is not None and tsv_file is not None:
-    patient_data = pd.read_csv(csv_file)
-    if tsv_file.name.endswith('.gz'):
-        gene_data = pd.read_csv(tsv_file, sep='\t', compression='gzip', index_col=0)
-    else:
-        gene_data = pd.read_csv(tsv_file, sep='\t', index_col=0)
+if csv_file and tsv_file:
+    try:
+        patient_data = pd.read_csv(csv_file)
+        if tsv_file.name.endswith('.gz'):
+            gene_data = pd.read_csv(tsv_file, sep='\t', compression='gzip', index_col=0)
+        else:
+            gene_data = pd.read_csv(tsv_file, sep='\t', index_col=0)
+            
+        st.success("Files uploaded successfully!")
+        st.write("### Patient Metadata Preview")
+        st.dataframe(patient_data.head(3))
+        
+        st.write("### Gene Expression Preview")
+        st.dataframe(gene_data.iloc[:3, :3])
+        
+    except Exception as e:
+        st.error(f"Error reading files: {str(e)}")
 
-    st.success("Files uploaded successfully!")
-    st.write("### Patient Metadata Preview")
-    st.dataframe(patient_data.head())
-
-    st.write("### Gene Expression Data Preview")
-    st.dataframe(gene_data.iloc[:5, :5])
-else:
-    st.info("Please upload both CSV and TSV files to proceed.")
-
-# Manual Form Input Section
-st.subheader("Manual Entry: Patient Information")
-with st.form("manual_form"):
+# Manual Input Section
+st.subheader("Manual Patient Assessment")
+with st.form("patient_form"):
     col1, col2 = st.columns(2)
     with col1:
-        age = st.number_input("Age (years)", min_value=18, max_value=120, value=58)
-        weight = st.number_input("Weight (kg)", min_value=30, max_value=300, value=85)
-        sex = st.selectbox("Sex", ["Male", "Female", "Unknown"])
+        age = st.slider("Age", 18, 100, 55)
+        weight = st.number_input("Weight (kg)", 40, 200, 85)
+        bmi = st.number_input("BMI", 15.0, 50.0, 28.5)
+        sex = st.radio("Sex", ["Male", "Female", "Other"])
+        
     with col2:
-        indication = st.selectbox("Indication for Semaglutide", ["Diabetes", "Weight Loss", "Other"])
-        country = st.selectbox("Country", ["US", "UK", "CA", "AU", "DE", "FR", "JP", "Other"])
-        reactions = st.text_input("Observed Reactions (comma-separated)", "Nausea, Vomiting")
+        diabetes = st.checkbox("Diabetes")
+        hypertension = st.checkbox("Hypertension")
+        kidney_disease = st.checkbox("Kidney Disease")
+        reactions = st.multiselect("Observed Reactions", 
+                                  ["Nausea", "Vomiting", "Diarrhea", "Constipation", "Abdominal Pain"],
+                                  ["Nausea"])
+        
     submitted = st.form_submit_button("Assess ADR Risk")
-
-if submitted:
-    reaction_list = [r.strip().lower() for r in reactions.split(",")]
-    features = {
-        'age': age,
-        'wt': weight,
-        'sex': sex,
-        'country': country,
-        'indication': indication,
-    }
-    for r in TOP_REACTIONS:
-        features[f'react_{r}'] = 1 if r in reaction_list else 0
     
-    features_df = pd.DataFrame([features])
-    processed = preprocessor.transform(features_df)
-    probability = model.predict_proba(processed)[0][1]
+    if submitted:
+        # Create feature dictionary
+        features = {
+            'age': age,
+            'weight': weight,
+            'bmi': bmi,
+            'sex': sex.lower(),
+            'diabetes': int(diabetes),
+            'hypertension': int(hypertension),
+            'kidney_disease': int(kidney_disease),
+        }
+        
+        # Add reactions
+        for r in TOP_REACTIONS:
+            features[f'react_{r}'] = 1 if r in reactions else 0
+        
+        try:
+            # Transform and predict
+            features_df = pd.DataFrame([features])
+            processed = preprocessor.transform(features_df)
+            probability = model.predict_proba(processed)[0][1]
+            
+            # Display results
+            st.subheader("Risk Assessment")
+            risk_level = "High Risk 🔴" if probability > 0.7 else "Medium Risk 🟠" if probability > 0.4 else "Low Risk 🟢"
+            st.metric("ADR Probability", f"{probability:.1%}", risk_level)
+            st.progress(probability)
+            
+            # Explainability
+            st.subheader("Key Risk Factors")
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer(processed)
+            
+            fig, ax = plt.subplots()
+            shap.plots.waterfall(shap_values[0], max_display=7, show=False)
+            st.pyplot(fig)
+            
+        except Exception as e:
+            st.error(f"Prediction error: {str(e)}")
+            st.error(traceback.format_exc())
 
-    if probability < 0.3:
-        risk_category = "Low Risk"
-        color = "green"
-    elif probability < 0.7:
-        risk_category = "Medium Risk"
-        color = "orange"
-    else:
-        risk_category = "High Risk"
-        color = "red"
+# Sidebar Resources
+st.sidebar.header("Clinical Resources")
+st.sidebar.download_button("Download Semaglutide Prescribing Info", 
+                          data=open("semaglutide_info.pdf", "rb").read(),
+                          file_name="semaglutide_prescribing_info.pdf")
 
-    st.subheader("Risk Assessment")
-    st.markdown(f"### <span style='color:{color}; font-size: 24px;'>{risk_category}</span>", unsafe_allow_html=True)
-    st.progress(probability)
-    st.markdown(f"**Probability of Serious ADR:** {probability:.1%}")
-
-    st.subheader("Risk Factors Breakdown")
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer(processed)
-    feature_names = preprocessor.get_feature_names_out()
-    shap_df = pd.DataFrame({'Feature': feature_names, 'SHAP Value': shap_values.values[0]}).sort_values('SHAP Value', ascending=False)
-    top_risk_factors = shap_df[shap_df['SHAP Value'] > 0].head(10)
-
-    if not top_risk_factors.empty:
-        st.write("Top contributing factors to serious ADR risk:")
-        for _, row in top_risk_factors.iterrows():
-            feature = row['Feature'].replace('cat__', '').replace('react_', '')
-            st.markdown(f"- **{feature}**: +{row['SHAP Value']:.2f} risk points")
-    else:
-        st.info("No significant risk factors identified")
-
-    st.subheader("Clinical Recommendations")
-    if probability > 0.7:
-        st.warning("""
-        - **Monitor closely** for serious adverse reactions
-        - Weekly follow-ups recommended
-        - Educate patient on warning signs (pancreatitis, renal issues)
-        - Perform baseline lab tests
-        """)
-    elif probability > 0.3:
-        st.info("""
-        - Follow standard monitoring protocol
-        - 2-week follow-up recommended
-        - Consider gradual dose escalation
-        """)
-    else:
-        st.success("""
-        - Routine follow-up sufficient
-        - Standard patient education
-        - Monthly check-ins
-        """)
-
-    st.subheader("Risk Factor Analysis")
-    fig, ax = plt.subplots()
-    shap.plots.waterfall(shap_values[0], max_display=10, show=False)
-    st.pyplot(fig)
-
-# Sidebar
-st.sidebar.header("Resources")
-st.sidebar.markdown("""
-- [Semaglutide Prescribing Info](https://www.novo-pi.com/ozempic.pdf)
-- [FDA FAERS](https://www.fda.gov/drugs/questions-and-answers-fdas-adverse-event-reporting-system-faers)
-- [ADR Guidelines](https://www.ncbi.nlm.nih.gov/books/NBK574518/)
+st.sidebar.header("About This Tool")
+st.sidebar.info("""
+- **Model**: XGBoost classifier
+- **Training Data**: 42,826 FAERS reports
+- **Version**: 2.1.0
+- **Last Updated**: 2023-11-15
 """)
 
-st.sidebar.header("About")
-st.sidebar.markdown("""
-- Based on 42,826 FAERS cases
-- Built using XGBoost
-- Clinical validation with known ADRs
-
-**Note:** This tool is for support, not a substitute for clinical judgment.
-""")
+# Add PubChem link
+st.sidebar.markdown("[PubChem Semaglutide Data](https://pubchem.ncbi.nlm.nih.gov/compound/Semaglutide)")
